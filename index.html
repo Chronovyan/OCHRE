@@ -1,0 +1,982 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OCHRE - Earthen Circuits</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@200;400;600&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --primary-color: #e97729;
+            --glow-color: rgba(233, 119, 41, 0.7);
+            --background-color: #100f0f;
+            --text-color: #d7d7d7;
+            --text-muted-color: #a0a0a0;
+            --frame-size: 10px;
+        }
+        body {
+            font-family: 'Montserrat', sans-serif;
+            background-color: var(--background-color);
+            color: var(--text-color);
+            overflow: hidden;
+            margin: 0;
+            padding: 0;
+            cursor: none; /* Hide default cursor */
+        }
+        #visualizer-canvas {
+            position: fixed; top: 0; left: 0;
+            width: 100%; height: 100%;
+            z-index: 1;
+        }
+        .site-frame {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            border: var(--frame-size) solid transparent;
+            pointer-events: none;
+            z-index: 100;
+        }
+        .site-frame::before {
+            content: '';
+            position: absolute;
+            top: calc(-1 * var(--frame-size));
+            left: calc(-1 * var(--frame-size));
+            right: calc(-1 * var(--frame-size));
+            bottom: calc(-1 * var(--frame-size));
+            border: 1px solid var(--primary-color);
+            opacity: 0.3;
+            box-shadow: 0 0 15px var(--glow-color);
+        }
+        .page {
+            position: absolute; top: var(--frame-size); left: var(--frame-size);
+            width: calc(100% - (2 * var(--frame-size))); 
+            height: calc(100% - (2 * var(--frame-size)));
+            opacity: 0; visibility: hidden;
+            transition: opacity 0.5s ease-out, transform 0.5s ease-out;
+            transform: scale(1.02);
+            z-index: 2;
+            overflow: hidden;
+        }
+        .page.active {
+            opacity: 1; visibility: visible;
+            transform: scale(1);
+        }
+        .page.exiting {
+            opacity: 0;
+            transform: scale(0.98);
+        }
+        .main-container, .song-detail-container {
+            display: flex; flex-direction: column;
+            height: 100%;
+            padding: clamp(1rem, 4vw, 2.5rem);
+            gap: 2rem;
+            box-sizing: border-box;
+        }
+        /* Main Album View */
+        .main-content {
+            flex-grow: 1;
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: clamp(2rem, 5vw, 4rem);
+            align-items: center;
+            overflow: hidden;
+        }
+        .album-art-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1.5rem;
+        }
+        .header { text-align: center; }
+        .album-title {
+            font-size: clamp(2rem, 6vw, 3.5rem); font-weight: 600;
+            letter-spacing: 1px; line-height: 1.1;
+            text-shadow: 0 0 1px #fff, 0 0 8px var(--primary-color);
+        }
+        .artist-name {
+            font-size: clamp(1rem, 3vw, 1.25rem); font-weight: 200;
+            letter-spacing: 6px; text-transform: uppercase;
+            color: var(--text-muted-color);
+        }
+        .tracklist-container {
+            backdrop-filter: blur(5px);
+            background: rgba(16, 15, 15, 0.2);
+            padding: 2rem; border-radius: 10px;
+            border-left: 1px solid rgba(255, 255, 255, 0.1);
+            max-height: 70vh; overflow-y: auto;
+            flex-grow: 1; /* Allow it to grow in the main content grid */
+        }
+        .tracklist { list-style: none; padding: 0; margin: 0; }
+        .tracklist li {
+            font-size: 1.1rem; font-weight: 400;
+            padding: 1rem 0.5rem; cursor: pointer; /* Changed to pointer */
+            transition: all 0.3s ease;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+            display: flex; align-items: center; gap: 1rem;
+        }
+        .tracklist li:hover { color: var(--primary-color); padding-left: 1rem; }
+        .track-number { font-size: 0.8rem; font-weight: 200; color: #777; width: 20px; transition: color 0.3s ease;}
+        .tracklist li:hover .track-number { color: var(--text-color); }
+        .tracklist li.playing .track-number { color: var(--primary-color); }
+        .tracklist li.playing { color: var(--primary-color); font-weight: 600; }
+        
+        /* SVG Logo Styling */
+        @keyframes pulse-glow {
+            0%, 100% { filter: drop-shadow(0 0 8px var(--glow-color)); }
+            50% { filter: drop-shadow(0 0 16px var(--glow-color)); }
+        }
+        .main-logo-svg {
+            animation: pulse-glow 5s ease-in-out infinite;
+            max-width: 450px;
+            width: 100%;
+            transition: filter 0.3s ease;
+        }
+        .main-logo-svg:hover {
+            animation-play-state: paused;
+            filter: drop-shadow(0 0 20px var(--glow-color));
+        }
+        .song-detail-logo-container svg {
+            filter: drop-shadow(0 0 8px var(--glow-color));
+        }
+        
+        /* Song Detail View */
+        .back-button {
+            position: absolute; top: clamp(1rem, 4vw, 2.5rem); left: clamp(1rem, 4vw, 2.5rem);
+            cursor: pointer; /* Changed to pointer */
+            font-size: 1.2rem;
+            font-weight: 200; transition: all 0.3s ease;
+            display: flex; align-items: center; gap: 0.5rem;
+            z-index: 10;
+        }
+        .back-button:hover { color: var(--primary-color); transform: translateX(-5px); }
+        .song-content {
+            flex-grow: 1; display: grid; 
+            grid-template-columns: 1fr; /* Default to single column for mobile */
+            align-items: center; justify-items: center; text-align: center;
+            gap: 2rem;
+        }
+        .song-detail-logo-container {
+            width: 100%;
+            max-width: 250px;
+            display: none; /* Hidden by default */
+        }
+        .lyrics-description {
+            backdrop-filter: blur(8px);
+            background: rgba(16, 15, 15, 0.4);
+            padding: clamp(1.5rem, 5vw, 3rem);
+            border-radius: 10px;
+            max-width: 600px;
+            border: 1px solid var(--primary-color); /* Added frame */
+            box-shadow: 0 0 15px var(--glow-color); /* Added glow */
+            position: relative; /* For animation */
+            left: 0; /* Starting position */
+            transition: left 0.8s ease-out, opacity 0.8s ease-out; /* Animation properties */
+            opacity: 0; /* Start hidden for animation */
+            max-height: 70vh; /* Make scrollable if content is long */
+            overflow-y: auto;
+            text-align: left; /* Lyrics should be left aligned */
+        }
+        /* Animation for lyrics to slide in */
+        .page.active .lyrics-description.lyrics-active {
+            left: 0;
+            opacity: 1;
+        }
+        .lyrics-description.lyrics-entering {
+             left: 100%; /* Start off-screen to the right */
+             opacity: 0;
+        }
+        .lyrics-description.lyrics-exiting {
+             left: -100%; /* Exit off-screen to the left */
+             opacity: 0;
+        }
+
+
+        .song-detail-title {
+            font-size: clamp(1.8rem, 5vw, 2.5rem); font-weight: 600;
+            margin-bottom: 1rem; color: var(--primary-color);
+            text-shadow: 0 0 1px #fff, 0 0 8px var(--primary-color);
+            text-align: center;
+        }
+        .description { font-style: italic; font-weight: 200; margin-bottom: 2rem; color: var(--text-muted-color); max-width: 50ch; margin-left: auto; margin-right: auto; text-align: center;}
+        .lyrics p { margin: 0; line-height: 1.8; font-size: 1.1rem; }
+        
+        /* Player */
+        .audio-player-container {
+            flex-shrink: 0; padding: 1rem; backdrop-filter: blur(5px);
+            background: rgba(16, 15, 15, 0.4);
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+        }
+        .now-playing { text-align: center; font-weight: 200; }
+        #current-track-title { font-weight: 400; color: var(--primary-color); }
+        .audio-player {
+            width: 100%; max-width: 500px; margin: 0.5rem auto 0;
+            display: flex; align-items: center; gap: 1rem;
+        }
+        .player-button { /* General style for all player buttons */
+            background-color: transparent; border: 2px solid var(--primary-color);
+            color: var(--primary-color); width: 40px; height: 40px; /* Slightly smaller buttons */
+            border-radius: 50%; display: flex; justify-content: center; align-items: center;
+            cursor: pointer; /* Changed to pointer */
+            transition: all 0.3s ease; flex-shrink: 0;
+        }
+        .player-button:hover {
+            background-color: rgba(233, 119, 41, 0.1); transform: scale(1.1);
+        }
+        .player-button svg {
+            width: 18px; height: 18px; /* Adjusted icon size */
+        }
+        /* Specific override for play/pause button size */
+        .play-pause-button {
+            width: 50px; /* Revert to original size for play/pause */
+            height: 50px;
+        }
+        .play-pause-button svg {
+            width: 20px; /* Revert to original size for play/pause icon */
+            height: 20px;
+        }
+
+        .progress-container {
+            width: 100%; height: 6px;
+            background-color: rgba(255, 255, 255, 0.1);
+            border-radius: 3px; cursor: pointer; /* Changed to pointer */
+        }
+        .progress-bar-inner { /* Changed from #progress-bar to .progress-bar-inner */
+            height: 100%; width: 0%;
+            background-color: var(--primary-color);
+            border-radius: 3px; transition: width 0.1s linear;
+        }
+        /* Responsive */
+        @media (min-width: 768px) {
+            .main-content {
+                grid-template-columns: repeat(2, 1fr);
+            }
+            .song-content {
+                /* Adjust grid for side-by-side on larger screens */
+                grid-template-columns: 1fr 1fr; /* Logo/Description side-by-side */
+            }
+            .song-detail-logo-container {
+                display: flex; /* Show logo container on larger screens */
+                align-items: center;
+                justify-content: center;
+            }
+            .lyrics-description {
+                text-align: left; /* Ensure lyrics remain left-aligned */
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="site-frame"></div>
+    <canvas id="visualizer-canvas"></canvas>
+
+    <!-- Main Album Page -->
+    <div id="page-album" class="page active">
+        <div class="main-container">
+            <div class="main-content">
+                <div class="album-art-container">
+                    <!-- Updated SVG to have distinct symbols for cloning -->
+                    <svg class="main-logo-svg" viewBox="0 0 300 100" xmlns="http://www.w3.org/2000/svg">
+                        <g id="logo-symbol-1">
+                            <!-- Kinetic Echo Symbol -->
+                            <path d="M 50,20 C 20,20 20,80 50,80 C 80,80 80,50 50,50 C 20,50 20,20 50,20" stroke="var(--primary-color)" stroke-width="4" fill="none" />
+                            <path d="M 50,80 C 60,80 60,65 50,65" stroke="var(--primary-color)" stroke-width="4" fill="none" />
+                        </g>
+                        <g id="logo-symbol-2">
+                            <!-- Code Breakers Symbol -->
+                            <path d="M 150,20 L 150,80 M 125,50 L 175,50 M 150,20 C 140,20 140,30 150,30 C 160,30 160,20 150,20" stroke="var(--primary-color)" stroke-width="4" fill="none" stroke-linecap="round"/>
+                        </g>
+                        <g id="logo-symbol-3">
+                            <!-- Obsidian Core Symbol -->
+                            <circle cx="250" cy="50" r="30" stroke="var(--primary-color)" stroke-width="4" fill="none" />
+                            <path d="M 240,40 Q 235,50 240,60 M 260,40 Q 265,50 260,60 M 250,80 L 250, 90" stroke="var(--primary-color)" stroke-width="4" fill="none" stroke-linecap="round"/></g>
+                    </svg>
+                    <div class="header">
+                        <h2 class="artist-name">OCHRE</h2>
+                        <h1 class="album-title">Earthen Circuits</h1>
+                    </div>
+                </div>
+                <div class="tracklist-container">
+                    <ol id="tracklist" class="tracklist"></ol>
+                </div>
+            </div>
+            <div class="audio-player-container">
+                <div class="now-playing">Now Playing: <span id="current-track-title-main">None</span></div>
+                <div id="player-main" class="audio-player"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Song Detail Page -->
+    <div id="page-song-detail" class="page">
+        <div class="song-detail-container">
+            <div class="back-button" id="back-to-album-btn">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"></polyline></svg>
+                Album
+            </div>
+            <div class="song-content">
+                <div id="song-detail-logo-container" class="song-detail-logo-container"></div>
+                <div id="lyrics-description-container" class="lyrics-description lyrics-entering">
+                    <h2 id="song-detail-title" class="song-detail-title"></h2>
+                    <p id="song-detail-description" class="description"></p>
+                    <div id="song-detail-lyrics" class="lyrics"></div>
+                </div>
+            </div>
+            <div class="audio-player-container">
+                <div class="now-playing">Now Playing: <span id="current-track-title-detail">None</span></div>
+                <div id="player-detail" class="audio-player"></div>
+            </div>
+        </div>
+    </div>
+    
+    <audio id="song" preload="auto" crossOrigin="anonymous"></audio>
+
+    <script>
+        // --- Album Data ---
+        const albumData = [
+            { title: "Primal Locus", src: "primal_locus.wav", scene: 'fireflies',
+              description: "[Suno: An ambient, evolving electronic track with deep, resonant pads, subtle synth textures, and a slow, meditative pulse. Features organic, natural sound effects like distant rustling and a gentle, rising hum. Minimal percussion, focusing on atmosphere and slow transitions. Key: Em, Tempo: 60 BPM, Genre: Ambient Electronic, Drone, Meditative.]",
+              lyrics: `
+              [Verse 1 - slow, deep pads, shimmering high synth layer]
+              <p>Fading light, whispers soft and low</p>
+              <p>First breath drawn, where ancient rivers flow</p>
+              <p>Forest floor, a carpet of the deep</p>
+              <p>Secrets buried, that the old earth keeps.</p>
+
+              [Chorus - gentle, rising hum, subtle low pulse enters]
+              <p>Primal Locus, heart of silent growth</p>
+              <p>Earthen echo, breaking ancient troth</p>
+              <p>Bioluminescent dreams begin to stir</p>
+              <p>A waking world, a new life to defer.</p>
+
+              [Verse 2 - synth textures slowly swell, faint rustling sounds]
+              <p>Roots entwine, beneath the heavy stone</p>
+              <p>Timeless slumber, where the seeds were sown</p>
+              <p>Emerald glow, through canopies so vast</p>
+              <p>A gentle dawn, too beautiful to last.</p>
+
+              [Chorus - hum more pronounced, pulse steady, light percussive ticks]
+              <p>Primal Locus, heart of silent growth</p>
+              <p>Earthen echo, breaking ancient troth</p>
+              <p>Bioluminescent dreams begin to stir</p>
+              <p>A waking world, a new life to defer.</p>
+
+              [Bridge - atmosphere widens, more layered pads, subtle bass drone]
+              <p>Listen closely, to the hum of power</p>
+              <p>Every atom, blooming in this hour</p>
+              <p>Unfurling tendrils, reaching for the light</p>
+              <p>Emerging softly, from the endless night.</p>
+
+              [Outro - sounds fade slowly, single high synth note holds, then dissolves into silence]
+              <p>Life and death... a cycle intertwined...</p>
+              <p>Left behind... for us to find...</p>
+              `
+            , symbolId: null },
+            { title: "Kinetic Echo", src: "kinetic_echo.wav", scene: 'pulse', description: "The core tribal beat of the album. A hypnotic, percussive track built for movement.", lyrics: "<p>Beat of the earth...<br>Hear the call...<br>Heart of the drum...<br>Move us all...</p><p>Echo... deep in the soul...<br>Echo... losing control...</p>", symbolId: 'logo-symbol-1' },
+            { title: "Shifting Sands", src: "shifting_sands.wav", description: "[Suno: An atmospheric and evolving electronic soundscape. Features shimmering, ethereal synths, a spacious arrangement, and subtle percussive elements that evoke the feeling of wind and shifting grains. Tempo is slow to moderate, focusing on a sense of endless movement and reflection. Incorporates faint, distant vocal pads. Key: Dm, Tempo: 80 BPM, Genre: Ambient Electronic, Downtempo, Atmospheric.]", lyrics: "<p>Wind speaks low...<br>Grains of time...<br>Watch them flow...<br>A patient climb換え...<br>The desert sings...<br>Of ancient things...</p>", symbolId: null },
+            { title: "Obsidian Core", src: "obsidian_core.wav", scene: 'shards', description: "A darker, industrial-tinged track with sharp, crystalline sounds and a driving, mechanical rhythm.", lyrics: "<p>Glass and stone...<br>Pressure builds...<br>Deep below...<br>The silence stills...</p>", symbolId: 'logo-symbol-3' },
+            { title: "Code Breakers", src: "code_breakers.wav", scene: 'geode', description: "The cinematic, triumphant finale where ancient rhythm collides with digital code.", lyrics: "<p>We went deep... to the source...<br>Re-write the living verse...<br>This time... we write the ending.</p>", symbolId: 'logo-symbol-2' },
+        ];
+        
+        // --- DOM Elements & State ---
+        const song = document.getElementById('song');
+        const tracklistEl = document.getElementById('tracklist');
+        const pageAlbum = document.getElementById('page-album');
+        const pageSongDetail = document.getElementById('page-song-detail');
+        const backToAlbumBtn = document.getElementById('back-to-album-btn');
+        const lyricsDescriptionContainer = document.getElementById('lyrics-description-container'); // Get the lyrics container
+        let currentTrackIndex = -1, isPlaying = false, currentScene = 'fireflies';
+        // Cache glow color for performance
+        let cachedGlowColor; 
+
+        // --- Player Setup ---
+        /**
+         * Sets up the audio player UI for a given container.
+         * Adds play/pause, previous, next, rewind, and fast-forward buttons.
+         * @param {string} containerId - The ID of the container element for the player.
+         * @param {string} titleId - The ID of the element displaying the current track title.
+         */
+        function setupPlayer(containerId, titleId){
+            const playerContainer = document.getElementById(containerId);
+            const playerHTML = `
+                <button id="prev-btn-${containerId}" class="player-button">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="19 20 9 12 19 4 19 20"></polygon><line x1="5" y1="19" x2="5" y2="5"></line></svg>
+                </button>
+                <button id="rewind-btn-${containerId}" class="player-button">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 19 2 12 11 4 11 19"></polygon><polygon points="22 19 13 12 22 4 22 19"></polygon></svg>
+                </button>
+                <button id="play-pause-btn-${containerId}" class="player-button play-pause-button">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg>
+                </button>
+                <button id="ffwd-btn-${containerId}" class="player-button">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 19 22 12 13 4 13 19"></polygon><polygon points="2 19 11 12 2 4 2 19"></polygon></svg>
+                </button>
+                <button id="next-btn-${containerId}" class="player-button">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19"></line></svg>
+                </button>
+                <div class="progress-container" id="progress-container-${containerId}"><div id="progress-bar-${containerId}" class="progress-bar-inner"></div></div>
+            `;
+            playerContainer.innerHTML = playerHTML;
+
+            // Attach event listeners to new buttons
+            document.getElementById(`prev-btn-${containerId}`).addEventListener('click', previousTrack);
+            document.getElementById(`rewind-btn-${containerId}`).addEventListener('click', rewind);
+            document.getElementById(`ffwd-btn-${containerId}`).addEventListener('click', fastForward);
+            document.getElementById(`next-btn-${containerId}`).addEventListener('click', nextTrack);
+        }
+
+        setupPlayer('player-main', 'current-track-title-main');
+        setupPlayer('player-detail', 'current-track-title-detail');
+
+        // --- Page Navigation ---
+        /**
+         * Shows a specific page with a transition effect.
+         * Handles lyrics animation for the song detail page.
+         * @param {string} pageId - The ID of the page to show.
+         */
+        function showPage(pageId) {
+            const activePage = document.querySelector('.page.active');
+            if (activePage && activePage.id !== pageId) {
+                // If exiting song detail, add exiting class to lyrics
+                if (activePage.id === 'page-song-detail') {
+                    lyricsDescriptionContainer.classList.add('lyrics-exiting');
+                    lyricsDescriptionContainer.classList.remove('lyrics-active');
+                }
+
+                activePage.classList.add('exiting');
+                setTimeout(() => {
+                    activePage.classList.remove('active', 'exiting');
+                    const nextPage = document.getElementById(pageId);
+                    nextPage.classList.add('active');
+
+                    // If entering song detail, add entering class to lyrics after page transition
+                    if (pageId === 'page-song-detail') {
+                        lyricsDescriptionContainer.classList.add('lyrics-entering');
+                        // Use a slight delay to ensure the initial 'left: 100%' is applied before transition
+                        setTimeout(() => {
+                            lyricsDescriptionContainer.classList.remove('lyrics-entering');
+                            lyricsDescriptionContainer.classList.add('lyrics-active');
+                        }, 50); // Small delay
+                    }
+                }, 500);
+            } else if (!activePage) {
+                document.getElementById(pageId).classList.add('active');
+                // Initial state for lyrics container if page is loaded directly as active
+                if (pageId === 'page-song-detail') {
+                     lyricsDescriptionContainer.classList.remove('lyrics-entering', 'lyrics-exiting');
+                     lyricsDescriptionContainer.classList.add('lyrics-active');
+                }
+            }
+        }
+        
+        // --- Audio & UI Logic ---
+        /**
+         * Loads a track by index and optionally plays it.
+         * Updates all relevant UI elements.
+         * @param {number} index - The index of the track in albumData.
+         * @param {boolean} autoplay - Whether to autoplay the track after loading.
+         */
+        function loadTrack(index, autoplay = false) {
+            if (index < 0 || index >= albumData.length) return;
+            const track = albumData[index];
+            
+            // Only update song.src if it's a different track
+            if (currentTrackIndex !== index) {
+                currentTrackIndex = index;
+                song.src = track.src;
+                currentScene = track.scene; // Update current visualizer scene
+                // If a new track is loaded, always play it if autoplay is true, or if it was previously playing
+                if (isPlaying || autoplay) {
+                    song.play();
+                } else {
+                    song.load(); // Load the new track without playing if not autoplaying or previously paused
+                }
+            } else if (autoplay && song.paused) {
+                song.play(); // If same track, but was paused, and autoplay is requested, play it.
+            }
+
+            // Update UI elements for both main and detail pages
+            ['main', 'detail'].forEach(id => {
+                document.getElementById(`current-track-title-${id}`).textContent = track.title;
+            });
+            document.getElementById('song-detail-title').textContent = track.title;
+            document.getElementById('song-detail-description').textContent = track.description;
+            document.getElementById('song-detail-lyrics').innerHTML = track.lyrics;
+            
+            // Handle dynamic SVG symbol cloning for song detail page
+            const logoContainer = document.getElementById('song-detail-logo-container');
+            logoContainer.innerHTML = ''; // Clear previous symbol
+            if(track.symbolId) {
+                const symbolNode = document.getElementById(track.symbolId).cloneNode(true);
+                const svgWrapper = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+                svgWrapper.setAttribute('viewBox', '0 0 100 100'); // Set viewBox appropriate for the cloned symbol
+                // Adjust position for cloned symbols if necessary (based on original SVG layout)
+                if (track.symbolId === 'logo-symbol-1') symbolNode.setAttribute('transform', 'translate(25, 0)');
+                if (track.symbolId === 'logo-symbol-2') symbolNode.setAttribute('transform', 'translate(-100, 0)');
+                if (track.symbolId === 'logo-symbol-3') symbolNode.setAttribute('transform', 'translate(-200, 0)');
+                svgWrapper.appendChild(symbolNode);
+                logoContainer.appendChild(svgWrapper);
+                logoContainer.style.display = 'flex'; // Show container if symbol exists
+            } else {
+                logoContainer.style.display = 'none'; // Hide container if no symbol
+            }
+            
+            updateUI();
+        }
+
+        /**
+         * Toggles play/pause state of the audio.
+         * Resumes audio context if suspended on first interaction.
+         */
+        function togglePlayPause() {
+            if (audioContext && audioContext.state === 'suspended') {
+                audioContext.resume().then(() => {
+                    if (currentTrackIndex === -1) { loadTrack(0, true); }
+                    else { song.paused ? song.play() : song.pause(); }
+                });
+            } else {
+                if (currentTrackIndex === -1) { loadTrack(0, true); }
+                else { song.paused ? song.play() : song.pause(); }
+            }
+        }
+
+        /** Plays the previous track in the album. */
+        function previousTrack() {
+            loadTrack((currentTrackIndex - 1 + albumData.length) % albumData.length, true);
+        }
+
+        /** Plays the next track in the album. */
+        function nextTrack() {
+            loadTrack((currentTrackIndex + 1) % albumData.length, true);
+        }
+
+        /** Rewinds the current track by 10 seconds. */
+        function rewind() {
+            song.currentTime = Math.max(0, song.currentTime - 10);
+        }
+
+        /** Fast-forwards the current track by 10 seconds. */
+        function fastForward() {
+            song.currentTime = Math.min(song.duration || 0, song.currentTime + 10);
+        }
+        
+        /**
+         * Updates the UI elements related to playback state (play/pause button, progress bar, tracklist highlight).
+         */
+        function updateUI() {
+            isPlaying = !song.paused;
+            // Update play/pause buttons
+            document.querySelectorAll('.play-pause-button').forEach(btn => {
+                btn.innerHTML = isPlaying ? `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"></path></svg>` : `<svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg>`;
+            });
+            // Update progress bars
+            const progress = song.duration ? (song.currentTime / song.duration) * 100 : 0;
+            document.querySelectorAll('.progress-bar-inner').forEach(bar => bar.style.width = `${progress}%`);
+            // Highlight playing track in the tracklist
+            document.querySelectorAll('#tracklist li').forEach((li, i) => {
+                li.classList.toggle('playing', i === currentTrackIndex && isPlaying);
+            });
+        }
+        
+        // --- Event Listeners ---
+        // Populate tracklist and add click listeners
+        albumData.forEach((track, index) => {
+            const li = document.createElement('li');
+            li.innerHTML = `<span class="track-number">${(index + 1).toString().padStart(2, '0')}</span> ${track.title}`;
+            // When clicking a track from the list, load it and *always* autoplay it.
+            li.addEventListener('click', () => { loadTrack(index, true); showPage('page-song-detail'); });
+            tracklistEl.appendChild(li);
+        });
+        backToAlbumBtn.addEventListener('click', () => showPage('page-album'));
+        // Add listeners to all play/pause buttons (these are now generic .player-button but play-pause-button specifically)
+        document.querySelectorAll('.play-pause-button').forEach(btn => btn.addEventListener('click', togglePlayPause));
+        // Add listeners to all progress containers for seeking
+        document.querySelectorAll('.progress-container').forEach(container => {
+            container.addEventListener('click', (e) => {
+                if (!song.duration) return;
+                const rect = container.getBoundingClientRect();
+                const clickX = e.clientX - rect.left;
+                song.currentTime = (clickX / rect.width) * song.duration;
+            });
+        });
+        song.addEventListener('play', updateUI);
+        song.addEventListener('pause', updateUI);
+        song.addEventListener('timeupdate', updateUI);
+        // Play next song when current one ends
+        song.addEventListener('ended', () => { loadTrack((currentTrackIndex + 1) % albumData.length, true); });
+
+        // --- Audio Error Handling ---
+        song.addEventListener('error', (e) => {
+            console.error('Error loading audio:', e);
+            let errorMessage = "Unknown audio error.";
+            switch (e.target.error.code) {
+                case e.target.error.MEDIA_ERR_ABORTED:
+                    errorMessage = "Audio playback aborted.";
+                    break;
+                case e.target.error.MEDIA_ERR_NETWORK:
+                    errorMessage = "Network error prevented audio playback.";
+                    break;
+                case e.target.error.MEDIA_ERR_DECODE:
+                    errorMessage = "Audio decoding error. File might be corrupted or unsupported format.";
+                    break;
+                case e.target.error.MEDIA_ERR_SRC_NOT_SUPPORTED:
+                    errorMessage = "Audio source not supported. Check file path/name and format.";
+                    break;
+            }
+            const currentTrackTitle = albumData[currentTrackIndex] ? albumData[currentTrackIndex].title : "unknown track";
+            document.getElementById('current-track-title-main').textContent = `Error loading track: ${currentTrackTitle} (${errorMessage})`;
+            document.getElementById('current-track-title-detail').textContent = `Error loading track: ${currentTrackTitle} (${errorMessage})`;
+            
+            // Pause playback if an error occurs to prevent continuous attempts
+            song.pause();
+            isPlaying = false; // Update UI state
+            updateUI(); // Reflect pause in buttons
+        });
+
+
+        // --- Canvas Visualizer & Background ---
+        const canvas = document.getElementById('visualizer-canvas');
+        const ctx = canvas.getContext('2d');
+        let starfield = [], mouseParticles = [], mouse = {x: undefined, y: undefined};
+        let audioContext, analyser, source, dataArray;
+        let waves = [], shards = [], geodeParticles = []; // For different scene types
+
+        /**
+         * Initializes the Web Audio API context, analyser, and connects them to the audio element.
+         * Called on the first user interaction to bypass browser autoplay policies.
+         */
+        function initAudio() {
+            if (audioContext) return; // Already initialized
+            audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            analyser = audioContext.createAnalyser();
+            analyser.fftSize = 256; // Smaller FFT size for quicker visual response
+            source = audioContext.createMediaElementSource(song);
+            source.connect(analyser);
+            analyser.connect(audioContext.destination);
+            const bufferLength = analyser.frequencyBinCount;
+            dataArray = new Uint8Array(bufferLength);
+        }
+
+        // Initialize audio on first user interaction
+        document.body.addEventListener('click', initAudio, { once: true });
+        
+        /**
+         * Resizes the canvas to fill the window and re-initializes the starfield.
+         */
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            starfield = [];
+            // Re-populate starfield for new canvas size
+            for (let i = 0; i < 150; i++) {
+                starfield.push({ x: Math.random() * canvas.width, y: Math.random() * canvas.height, radius: Math.random() * 1.5, vx: (Math.random() - 0.5) * 0.1, vy: (Math.random() - 0.5) * 0.1, opacity: Math.random() * 0.5 + 0.2 });
+            }
+            // Reset scene-specific particles for new canvas size
+            waves = [];
+            shards = [];
+            geodeParticles = [];
+        }
+        window.addEventListener('resize', resizeCanvas);
+        // Updated mousemove listener with console.log for debugging
+        window.addEventListener('mousemove', e => { 
+            mouse.x = e.clientX; 
+            mouse.y = e.clientY; 
+            // console.log(`Mouse moved: x=${mouse.x}, y=${mouse.y}`); // Keep this line for debugging
+        });
+        
+        // Cache the glow color once at startup
+        document.addEventListener('DOMContentLoaded', () => {
+            cachedGlowColor = getComputedStyle(document.documentElement).getPropertyValue('--glow-color').trim();
+            animate(); // Start the animation loop after DOM is ready and cachedGlowColor is set
+        });
+
+        /**
+         * Draws the visualizer scene based on the current track's scene type.
+         * Uses audio data (bass, mid, treble) to drive visual effects.
+         */
+        function drawVisualizerScene() {
+            if (!analyser) return; // Audio context not yet initialized
+
+            analyser.getByteFrequencyData(dataArray);
+            const bufferLength = analyser.frequencyBinCount;
+            // Optimize audio data slicing and reduction
+            let bass = 0, mid = 0, treble = 0;
+            const bassBand = Math.floor(bufferLength / 8);
+            const midBand = Math.floor(bufferLength / 2);
+
+            for (let i = 0; i < bassBand; i++) {
+                bass += dataArray[i];
+            }
+            bass /= bassBand;
+
+            for (let i = bassBand; i < midBand; i++) {
+                mid += dataArray[i];
+            }
+            mid /= (midBand - bassBand);
+
+            for (let i = midBand; i < bufferLength; i++) {
+                treble += dataArray[i];
+            }
+            treble /= (bufferLength - midBand);
+
+
+            ctx.lineWidth = 2; // Default line width for many effects
+
+            switch (currentScene) {
+                case 'fireflies':
+                    // Generate new fireflies occasionally
+                    if (Math.random() < 0.1) {
+                        mouseParticles.push({
+                            x: Math.random() * canvas.width,
+                            y: Math.random() * canvas.height,
+                            life: 1, // Full life
+                            radius: Math.random() * 2 + 1,
+                            vx: (Math.random() - 0.5) * 2, // Random movement
+                            vy: (Math.random() - 0.5) * 2
+                        });
+                    }
+                    // Animate and draw fireflies (reusing mouseParticles logic for the "firefly" effect)
+                    for (let i = mouseParticles.length - 1; i >= 0; i--) {
+                        const p = mouseParticles[i];
+                        p.life -= 0.01; // Slower decay for fireflies
+                        p.x += p.vx;
+                        p.y += p.vy;
+                        // Bounce off edges
+                        if (p.x < 0 || p.x > canvas.width) p.vx *= -1;
+                        if (p.y < 0 || p.y > canvas.height) p.vy *= -1;
+
+                        if (p.life <= 0) {
+                            mouseParticles.splice(i, 1);
+                        } else {
+                            ctx.beginPath();
+                            ctx.arc(p.x, p.y, Math.max(0, p.radius * p.life), 0, Math.PI * 2);
+                            ctx.fillStyle = `rgba(233, 119, 41, ${p.life * 0.8})`;
+                            ctx.shadowBlur = 10 * p.life;
+                            ctx.shadowColor = `rgba(233, 119, 41, ${p.life})`;
+                            ctx.fill();
+                            ctx.shadowBlur = 0; // Reset shadow
+                        }
+                    }
+                    break;
+
+                case 'pulse':
+                    // Central pulsing circle, reacts strongly to bass
+                    const pulseRadius = 50 + (bass * 0.7) + (mid * 0.3); // Larger radius
+                    ctx.beginPath();
+                    ctx.arc(canvas.width / 2, canvas.height / 2, pulseRadius, 0, Math.PI * 2);
+                    ctx.strokeStyle = `rgba(233, 119, 41, ${bass / 255 * 1.5})`; // More opaque with bass
+                    ctx.lineWidth = 5 + (bass / 50); // Thicker line
+                    ctx.shadowBlur = 20 + (bass / 10);
+                    ctx.shadowColor = cachedGlowColor; // Using cached value
+                    ctx.stroke();
+                    ctx.shadowBlur = 0;
+                    break;
+
+                case 'waves':
+                    // Generate new waves if needed
+                    if (waves.length < 5 && Math.random() < 0.05) {
+                        waves.push({
+                            y: Math.random() * canvas.height,
+                            amplitude: 10 + (bass / 10),
+                            frequency: 0.01 + (treble / 5000),
+                            phase: Math.random() * Math.PI * 2,
+                            life: 1
+                        });
+                    }
+                    // Animate and draw waves
+                    for (let i = waves.length - 1; i >= 0; i--) {
+                        const wave = waves[i];
+                        wave.life -= 0.005; // Slowly fade out
+                        if (wave.life <= 0) {
+                            waves.splice(i, 1);
+                            continue;
+                        }
+
+                        ctx.beginPath();
+                        ctx.strokeStyle = `rgba(233, 119, 41, ${wave.life * 0.5 + (mid / 255 * 0.3)})`;
+                        ctx.lineWidth = 1 + (bass / 100);
+                        for (let x = 0; x < canvas.width; x += 5) {
+                            const y = wave.y + Math.sin(x * wave.frequency + wave.phase) * wave.amplitude;
+                            if (x === 0) ctx.moveTo(x, y);
+                            else ctx.lineTo(x, y);
+                        }
+                        ctx.stroke();
+                    }
+                    break;
+
+                case 'shards':
+                    // Generate new shards based on audio peaks
+                    if (bass > 100 || mid > 100 || treble > 100) {
+                        for (let i = 0; i < 2; i++) {
+                            shards.push({
+                                x: Math.random() * canvas.width,
+                                y: Math.random() * canvas.height,
+                                size: 5 + (bass / 20),
+                                rotation: Math.random() * Math.PI * 2,
+                                vx: (Math.random() - 0.5) * 2,
+                                vy: (Math.random() - 0.5) * 2,
+                                life: 1
+                            });
+                        }
+                    }
+                    // Animate and draw shards
+                    for (let i = shards.length - 1; i >= 0; i--) {
+                        const shard = shards[i];
+                        shard.life -= 0.01;
+                        shard.x += shard.vx;
+                        shard.y += shard.vy;
+                        shard.rotation += 0.01;
+
+                        if (shard.life <= 0) {
+                            shards.splice(i, 1);
+                            continue;
+                        }
+
+                        ctx.save();
+                        ctx.translate(shard.x, shard.y);
+                        ctx.rotate(shard.rotation);
+                        ctx.beginPath();
+                        const opacity = shard.life * (bass / 255 * 0.5 + 0.5); // More opaque with bass
+                        ctx.fillStyle = `rgba(233, 119, 41, ${opacity})`;
+                        ctx.moveTo(0, -shard.size);
+                        ctx.lineTo(shard.size * 0.866, shard.size * 0.5);
+                        ctx.lineTo(-shard.size * 0.866, shard.size * 0.5);
+                        ctx.closePath();
+                        ctx.fill();
+                        ctx.restore();
+                    }
+                    break;
+
+                case 'geode':
+                    // Generate geode particles on strong beats
+                    if (bass > 120 && Math.random() < 0.5) {
+                        for (let i = 0; i < 5; i++) {
+                            geodeParticles.push({
+                                x: canvas.width / 2,
+                                y: canvas.height / 2,
+                                angle: Math.random() * Math.PI * 2,
+                                speed: Math.random() * 5 + 1,
+                                size: Math.random() * 3 + 1,
+                                life: 1
+                            });
+                        }
+                    }
+                    // Animate and draw geode particles
+                    for (let i = geodeParticles.length - 1; i >= 0; i--) {
+                        const p = geodeParticles[i];
+                        p.life -= 0.02;
+                        p.x += Math.cos(p.angle) * p.speed;
+                        p.y += Math.sin(p.angle) * p.speed;
+                        p.speed *= 0.98; // Slow down over time
+
+                        if (p.life <= 0) {
+                            geodeParticles.splice(i, 1);
+                            continue;
+                        }
+
+                        ctx.beginPath();
+                        ctx.arc(p.x, p.y, Math.max(0, p.size * p.life), 0, Math.PI * 2);
+                        ctx.fillStyle = `rgba(233, 119, 41, ${p.life * 0.7})`;
+                        ctx.shadowBlur = 5 * p.life;
+                        ctx.shadowColor = cachedGlowColor; // Using cached value
+                        ctx.fill();
+                        ctx.shadowBlur = 0;
+                    }
+                    break;
+            }
+        }
+        
+        /**
+         * Main animation loop. Clears canvas, draws starfield, visualizer scene, and custom cursor.
+         */
+        function animate() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height); // Clear entire canvas
+
+            // Draw starfield (always present background)
+            starfield.forEach(star => {
+                star.x += star.vx; star.y += star.vy;
+                if (star.x < 0 || star.x > canvas.width) star.vx *= -1;
+                if (star.y < 0 || star.y > canvas.height) star.vy *= -1;
+                ctx.beginPath(); ctx.arc(star.x, star.y, star.radius, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(215, 215, 215, ${star.opacity})`; ctx.fill();
+            });
+
+            // Draw active visualizer scene
+            drawVisualizerScene();
+
+            // Handle mouse particles for the custom cursor effect
+            if(mouse.x !== undefined && mouse.y !== undefined){
+                // Add a new particle at mouse position
+                // Limit particle creation rate to improve performance if needed
+                if (mouseParticles.length < 200) { // Keep particle count reasonable
+                    mouseParticles.push({
+                        x: mouse.x,
+                        y: mouse.y,
+                        life: 1, // Initial life for the particle
+                        radius: Math.random() * 3 + 2, // Random radius for a varied look
+                        vx: (Math.random() - 0.5) * 0.5, // Small random velocity
+                        vy: (Math.random() - 0.5) * 0.5
+                    });
+                }
+            }
+            
+            // Update and draw mouse particles
+            for (let i = mouseParticles.length - 1; i >= 0; i--) {
+                const p = mouseParticles[i];
+                p.life -= 0.03; // Decrease life over time
+                p.x += p.vx;
+                p.y += p.vy;
+
+                if (p.life <= 0) {
+                    mouseParticles.splice(i, 1); // Remove dead particles
+                } else {
+                    ctx.beginPath();
+                    // Radius shrinks with life, ensuring it doesn't go below 0
+                    ctx.arc(p.x, p.y, Math.max(0, p.radius * p.life), 0, Math.PI * 2);
+                    // Fade out with life
+                    ctx.fillStyle = `rgba(233, 119, 41, ${p.life * 0.8})`;
+                    ctx.shadowBlur = 10 * p.life; // Glow effect
+                    ctx.shadowColor = `rgba(233, 119, 41, ${p.life})`;
+                    ctx.fill();
+                    ctx.shadowBlur = 0; // Reset shadow for other drawings
+                }
+            }
+
+            // Custom cursor visual
+            if(mouse.x !== undefined && mouse.y !== undefined){
+                ctx.beginPath();
+                ctx.arc(mouse.x, mouse.y, 8, 0, Math.PI*2); // Larger circle
+                ctx.strokeStyle = 'rgba(233, 119, 41, 0.9)';
+                ctx.lineWidth = 3;
+                ctx.shadowBlur = 15;
+                ctx.shadowColor = cachedGlowColor; // Using cached value
+                ctx.stroke();
+                ctx.shadowBlur = 0;
+            }
+
+            requestAnimationFrame(animate); // Loop the animation
+        }
+
+        /**
+         * Helper function to get CSS variable values.
+         * @param {string} varName - The name of the CSS variable (e.g., '--primary-color').
+         * @returns {string} The computed value of the CSS variable.
+         */
+        function varValue(varName) {
+            // This function is still here for clarity but is mostly replaced by cachedGlowColor usage.
+            // It might be used for other variables if needed in the future.
+            return getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+        }
+        
+        // Initial setup calls
+        // Ensure that cachedGlowColor is initialized before animate is called.
+        // This is handled by the DOMContentLoaded listener.
+        loadTrack(0); // Load the first track by default
+        resizeCanvas(); // Set initial canvas size and populate starfield
+        // The animate() call is now part of the DOMContentLoaded listener to ensure
+        // cachedGlowColor is set before it's used in the animation loop.
+    </script>
+</body>
+</html>
